@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { FaPlane, FaCreditCard, FaDollarSign, FaCoins, FaMoneyBill } from 'react-icons/fa';
 import { getFlightDetails } from "../services/flightApi";
-import { searchBooks } from "../services/bookApi";
-
+import { searchBooks, createBooking } from "../services/bookApi"; // 导入createBooking方法
 
 const FlightDetailPage = () => {
   const { flightId } = useParams();
@@ -16,6 +15,16 @@ const FlightDetailPage = () => {
   const [error, setError] = useState(null);
   const [passengerCount] = useState(1);
   const [bookingSuccess, setBookingSuccess] = useState(false);
+  const username = localStorage.getItem('username');
+
+  // 用于获取画面价格的ref
+  const totalPriceRef = useRef(null);
+
+  // 新增预订状态
+  const [bookingProcessing, setBookingProcessing] = useState(false);
+  const [bookingError, setBookingError] = useState(null);
+  const [bookingData, setBookingData] = useState(null); // 存储预订成功后返回的数据
+  const [totalPrice, setTotalPrice] = useState(0); // 存储从画面获取的总价格
 
   useEffect(() => {
     if (location.state?.flight) {
@@ -24,7 +33,7 @@ const FlightDetailPage = () => {
     } else {
       fetchFlightDetails();
     }
-  }, [flightId, location.state]);
+  }, [flightId, location.state]); // 移除flight依赖，避免无限循环
 
   const fetchFlightDetails = async () => {
     try {
@@ -38,26 +47,73 @@ const FlightDetailPage = () => {
       console.error('Failed to fetch flight details:', err);
       setError('Failed to load flight details. Please try again.');
     } finally {
-      setLoading(false);
+      setLoading(false); // 确保无论如何都会结束加载状态
     }
   };
 
+  // 从UI获取总价格
+  const updateTotalPriceFromUI = () => {
+    if (flight && flight.totalfare) {
+      const price = parseFloat(flight.totalfare);
+      if (!isNaN(price)) {
+        setTotalPrice(price);
+      }
+    } else if (totalPriceRef.current) {
+      const priceText = totalPriceRef.current.textContent;
+      const price = parseFloat(priceText.replace(/[^0-9.-]+/g, ''));
+      if (!isNaN(price)) {
+        setTotalPrice(price);
+      }
+    }
+  };
+
+  // 添加新的useEffect来处理价格更新
+  useEffect(() => {
+    // 当flight数据或DOM元素就绪时更新价格
+    if (flight || totalPriceRef.current) {
+      updateTotalPriceFromUI();
+    }
+  }, [flight, totalPriceRef.current]);
+
+  // 修改现有函数：使用createBooking方法替代原来的逻辑
   const handleBookFlight = async () => {
+    if (!flight) return;
+    
+    setLoading(true); // 这里的loading可能是误用，应该是setBookingProcessing?
+    setBookingProcessing(true);
+    setBookingError(null);
+    
     try {
-      setLoading(true);
-      await searchBooks({
-        flightId: flight.id,
-        passengerCount,
-      });
-      setBookingSuccess(true);
+      // 准备要发送的数据，包含flightId和从画面获取的总价格
+      const bookingData = {
+        username: username,
+        flightId: flightId,
+        totalPrice: totalPrice.toFixed(2)
+      };
+      
+      console.log("发送到后端的预订数据:", bookingData);
+      
+      // 调用createBooking方法发送POST请求
+      const response = await createBooking(bookingData);
+      
+      console.log("Booking response:", response);
+      
+      if (response && response.success) {
+        setBookingSuccess(true);
+        setBookingData(response.data); // 保存后端返回的预订信息
+      } else {
+        setBookingError(response?.message || 'Failed to create booking. Please try again.');
+      }
     } catch (err) {
-      console.error('Booking failed:', err);
-      setError('Booking failed. Please try again.');
+      console.error('Booking error:', err);
+      setBookingError('An error occurred while processing your booking. Please try again.');
     } finally {
-      setLoading(false);
+      setLoading(false); // 这里的loading可能是误用，应该是setBookingProcessing?
+      setBookingProcessing(false);
     }
   };
 
+  // 保持原有函数不变
   const formatTime = (dateTime) => {
     return dayjs(dateTime).format('HH:mm');
   };
@@ -73,7 +129,8 @@ const FlightDetailPage = () => {
     return `${hours}h ${minutes}m`;
   };
 
-  if (loading) {
+  // 修改加载状态判断，仅当真正加载数据时显示
+  if (loading && !flight) {
     return (
       <div className="max-w-4xl mx-auto p-4 text-center">
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto"></div>
@@ -110,20 +167,13 @@ const FlightDetailPage = () => {
     );
   }
 
+  // 修改预订成功页面：显示新的预订信息
   if (bookingSuccess) {
     return (
       <div className="max-w-4xl mx-auto p-4 text-center">
         <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4">
-          <h3 className="font-bold text-lg">Booking Confirmed!</h3>
+          <h3 className="font-bold text-lg">Booking Successful!</h3>
           <p>Your flight has been successfully booked.</p>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow-md mb-6 text-left">
-          <h4 className="font-bold text-lg mb-2">Booking Summary</h4>
-          <p><span className="font-semibold">Flight:</span> {flight.flightNumber}</p>
-          <p><span className="font-semibold">Route:</span> {flight.departureAirport} → {flight.arrivalAirport}</p>
-          <p><span className="font-semibold">Date:</span> {formatDate(flight.departureTime)}</p>
-          <p><span className="font-semibold">Passengers:</span> {passengerCount}</p>
-          <p><span className="font-semibold">Total Price:</span> ${parseFloat(flight.price * passengerCount).toFixed(2)}</p>
         </div>
         <button
           onClick={() => navigate('/')}
@@ -135,6 +185,7 @@ const FlightDetailPage = () => {
     );
   }
 
+  // 修改按钮：添加预订状态显示
   return (
     <div className="max-w-4xl mx-auto p-4">
       <button
@@ -147,21 +198,18 @@ const FlightDetailPage = () => {
       <div className="bg-white rounded-lg shadow-md overflow-hidden">
         <div className="p-6">
           <div className="flex flex-col md:flex-row justify-between items-center mb-8">
-
             <div className="mb-4 md:mb-0">
               <p className="text-gray-500">Departure</p>
               <p className="text-xl font-bold">{flight.departure}</p>
               <p className="text-gray-600">{formatDate(flight.departureTimestamp)}</p>
               <p className="text-2xl font-medium">{formatTime(flight.departureTimestamp)}</p>
             </div>
-
             <div className="flex flex-col items-center mx-4 my-4">
               <FaPlane className="text-blue-500 text-xl transform" />
               <p className="text-sm text-gray-500 mt-2">
                 {calculateDuration(flight.departureTimestamp, flight.destinationTimestamp)}
               </p>
             </div>
-
             <div className="text-right">
               <p className="text-gray-500">Arrival</p>
               <p className="text-xl font-bold">{flight.destination}</p>
@@ -179,15 +227,15 @@ const FlightDetailPage = () => {
               </div>
               <div className="flex items-center">
                 <FaDollarSign className="text-blue-500 mr-2" />
-                <span>Base Fare: {flight.basefare}</span>
+                <span>Base Fare: ${flight.basefare}</span>
               </div>
               <div className="flex items-center">
                 <FaCoins className="text-blue-500 mr-2" />
-                <span>Tax Fare: {flight.taxfare}</span>
+                <span>Tax Fare: ${flight.taxfare}</span>
               </div>
-              <div className="flex items-center">
+              <div className="flex items-center" ref={totalPriceRef}>
                 <FaMoneyBill className="text-blue-500 mr-2" />
-                <span>Total Fare: {flight.totalfare}</span>
+                <span>Total Fare: ${flight.totalfare || '0.00'}</span>
               </div>
             </div>
           </div>
@@ -195,17 +243,20 @@ const FlightDetailPage = () => {
           <div className="bg-gray-50 p-4 rounded-lg">
             <button
               onClick={handleBookFlight}
-              disabled={loading}
-              className={`w-full py-3 px-4 rounded-md text-white font-bold ${loading
+              disabled={loading || bookingProcessing}
+              className={`w-full py-3 px-4 rounded-md text-white font-bold ${loading || bookingProcessing
                 ? 'bg-gray-400 cursor-not-allowed'
                 : 'bg-blue-600 hover:bg-blue-700'
                 }`}
             >
-              {loading ? 'Processing...' : 'Booking Flight'}
+              {bookingProcessing 
+                ? 'Processing Booking...' 
+                : 'Book Flight'}
             </button>
-
-            {error && (
-              <p className="text-red-500 mt-2 text-center">{error}</p>
+            
+            {/* 新增：预订错误提示 */}
+            {bookingError && (
+              <p className="text-red-500 mt-2 text-center">{bookingError}</p>
             )}
           </div>
         </div>

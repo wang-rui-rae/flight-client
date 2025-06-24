@@ -12,3 +12,9 @@ export const getBookDetails = async (bookingReference) => {
     return bookHttpClient.get(`/bookings/${bookingReference}`);
 };
 
+// insert book
+export const createBooking = async (params) => {
+    console.log("Creating booking with params:", params);
+    return bookHttpClient.post('/booking/confirm',  params);
+
+};
